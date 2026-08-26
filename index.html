@@ -5,13 +5,25 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#003c41">
   <title>BIOTROP — Gestão Industrial</title>
+  <style>html,body{margin:0;width:100%;height:100%;background:#003c41;font-family:system-ui,sans-serif}#boot{min-height:100vh;display:grid;place-items:center;color:#fff}small{opacity:.7}</style>
 </head>
-<body style="margin:0;background:#003c41">
+<body>
+  <div id="boot">Carregando BIOTROP — Control Room…</div>
   <script>
-    // Entrada estática deliberadamente simples: não usa iframe, fetch ou document.write.
-    // Isso evita uma tela branca no Vercel/GitHub Pages quando o app.html é carregado.
-    window.location.replace('./app.html');
+  (async()=>{
+    const go=()=>location.replace('./app.html');
+    if(!('serviceWorker' in navigator)){go();return;}
+    try{
+      const reg=await navigator.serviceWorker.register('./sw.js',{scope:'./'});
+      await navigator.serviceWorker.ready;
+      if(!navigator.serviceWorker.controller){await new Promise(r=>setTimeout(r,150));}
+      go();
+    }catch(e){
+      console.warn('Service Worker indisponível; abrindo aplicação original.',e);
+      go();
+    }
+  })();
   </script>
-  <noscript><p style="padding:24px;font-family:system-ui">Ative o JavaScript para abrir o sistema BIOTROP.</p></noscript>
+  <noscript><div id="boot">Ative o JavaScript para abrir o sistema.</div></noscript>
 </body>
 </html>
