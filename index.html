@@ -1,5 +1,35 @@
 <!doctype html>
 <html lang="pt-BR">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url=app.html"><title>BIOTROP — Gestão Industrial</title></head>
-<body><p>Carregando BIOTROP…</p><script>location.replace('app.html');</script></body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#003c41">
+  <title>BIOTROP — Gestão Industrial</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#003c41}
+    #app-frame{border:0;width:100%;height:100%;display:block;background:#f4f7f6}
+    #boot{position:fixed;inset:0;display:grid;place-items:center;background:#003c41;color:#fff;font:600 14px system-ui;z-index:10;transition:.25s}
+    #boot.hide{opacity:0;pointer-events:none}
+  </style>
+</head>
+<body>
+  <div id="boot">Carregando BIOTROP — Control Room…</div>
+  <iframe id="app-frame" title="BIOTROP Gestão Industrial" src="./app.html"></iframe>
+  <script>
+    const frame=document.getElementById('app-frame');
+    frame.addEventListener('load',()=>{
+      try{
+        const d=frame.contentDocument||frame.contentWindow.document;
+        const head=d.head;
+        if(!head.querySelector('[data-biotrop-enhancements-css]')){
+          const link=d.createElement('link');link.rel='stylesheet';link.href='/assets/css/biotrop-enhancements.css';link.dataset.biotropEnhancementsCss='1';head.appendChild(link);
+        }
+        if(!head.querySelector('[data-biotrop-enhancements-js]')){
+          const script=d.createElement('script');script.src='/assets/js/biotrop-enhancements.js';script.defer=true;script.dataset.biotropEnhancementsJs='1';head.appendChild(script);
+        }
+        document.getElementById('boot').classList.add('hide');
+      }catch(e){document.getElementById('boot').textContent='Não foi possível carregar a aplicação.';console.error(e)}
+    });
+  </script>
+</body>
 </html>
