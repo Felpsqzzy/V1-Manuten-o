@@ -100,6 +100,66 @@ create table if not exists public.user_notifications (
   created_at timestamptz not null default now()
 );
 
+-- =============================
+-- UTILIDADES / MEDIDORES
+-- =============================
+create table if not exists public.utility_meters (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  name text not null,
+  utility_type text not null check (utility_type in ('horimetro','agua','gas','energia')),
+  location text,
+  unit text not null default 'h',
+  initial_reading numeric(14,3) not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_utility_meters_type on public.utility_meters(utility_type);
+create index if not exists idx_utility_meters_active on public.utility_meters(active);
+
+create table if not exists public.utility_readings (
+  id uuid primary key default gen_random_uuid(),
+  meter_id uuid references public.utility_meters(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  reading_value numeric(14,3) not null,
+  previous_reading numeric(14,3),
+  consumption numeric(14,3),
+  reading_date timestamptz not null default now(),
+  server_timestamp timestamptz not null default now(),
+  latitude numeric(10,7),
+  longitude numeric(10,7),
+  status text not null default 'pendente' check (status in ('pendente','aprovado','rejeitado')),
+  observation text,
+  inconsistent boolean not null default false,
+  correction_requested boolean not null default false,
+  photo_path text,
+  captured_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_utility_readings_meter_date on public.utility_readings(meter_id,reading_date desc);
+create index if not exists idx_utility_readings_user_date on public.utility_readings(user_id,reading_date desc);
+create index if not exists idx_utility_readings_status on public.utility_readings(status);
+
+-- Compatibilidade com versões anteriores que já possuíam public.meters.
+create table if not exists public.meters (
+  id uuid primary key default gen_random_uuid(),
+  utility_id uuid,
+  code text not null unique,
+  name text not null,
+  unit text not null default 'h',
+  location text,
+  sector text,
+  equipment text,
+  serial_number text,
+  manufacturer text,
+  model text,
+  status text not null default 'active',
+  installed_at date,
+  initial_reading numeric(14,3) not null default 0,
+  notes text,
+  created_at timestamptz not null default now()
+);
+
 insert into storage.buckets(id,name,public) values ('profile-pictures','profile-pictures',true) on conflict(id) do update set public=true;
 insert into storage.buckets(id,name,public) values ('material-attachments','material-attachments',false) on conflict(id) do nothing;
 insert into storage.buckets(id,name,public) values ('utility-evidence','utility-evidence',false) on conflict(id) do nothing;
@@ -110,30 +170,72 @@ alter table public.apontamentos enable row level security;
 alter table public.material_anexos enable row level security;
 alter table public.aprovacao_auditoria enable row level security;
 alter table public.user_notifications enable row level security;
+alter table public.utility_meters enable row level security;
+alter table public.utility_readings enable row level security;
+
+-- Função segura para verificar gestor/admin sem depender da tabela no frontend.
+create or replace function public.current_user_is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path=public
+as $$
+  select exists (
+    select 1 from public.profiles p
+    where p.id = auth.uid()
+      and coalesce(p.role_code,p.app_role,'') in ('admin','gestor','aprovador','almoxarife')
+      and coalesce(p.active,true)=true
+  );
+$$;
 
 drop policy if exists profiles_self_select on public.profiles;
-create policy profiles_self_select on public.profiles for select to authenticated using ((select auth.uid())=id);
+create policy profiles_self_select on public.profiles for select to authenticated using ((select auth.uid())=id or public.current_user_is_admin());
 drop policy if exists profiles_self_insert on public.profiles;
 create policy profiles_self_insert on public.profiles for insert to authenticated with check ((select auth.uid())=id);
 drop policy if exists profiles_self_update on public.profiles;
-create policy profiles_self_update on public.profiles for update to authenticated using ((select auth.uid())=id) with check ((select auth.uid())=id);
+create policy profiles_self_update on public.profiles for update to authenticated using ((select auth.uid())=id or public.current_user_is_admin()) with check ((select auth.uid())=id or public.current_user_is_admin());
 
 drop policy if exists materiais_select_own_or_approved on public.materiais;
-create policy materiais_select_own_or_approved on public.materiais for select to authenticated using ((select auth.uid())=solicitante_id or status='Aprovado');
+create policy materiais_select_own_or_approved on public.materiais for select to authenticated using ((select auth.uid())=solicitante_id or status='Aprovado' or public.current_user_is_admin());
 drop policy if exists materiais_insert_own on public.materiais;
 create policy materiais_insert_own on public.materiais for insert to authenticated with check ((select auth.uid())=solicitante_id);
 drop policy if exists materiais_update_own on public.materiais;
-create policy materiais_update_own on public.materiais for update to authenticated using ((select auth.uid())=solicitante_id) with check ((select auth.uid())=solicitante_id);
+create policy materiais_update_own on public.materiais for update to authenticated using ((select auth.uid())=solicitante_id or public.current_user_is_admin()) with check ((select auth.uid())=solicitante_id or public.current_user_is_admin());
 
 drop policy if exists apontamentos_select_own_or_approved on public.apontamentos;
-create policy apontamentos_select_own_or_approved on public.apontamentos for select to authenticated using ((select auth.uid())=user_id or status='Aprovado');
+create policy apontamentos_select_own_or_approved on public.apontamentos for select to authenticated using ((select auth.uid())=user_id or status='Aprovado' or public.current_user_is_admin());
 drop policy if exists apontamentos_insert_own on public.apontamentos;
 create policy apontamentos_insert_own on public.apontamentos for insert to authenticated with check ((select auth.uid())=user_id);
 drop policy if exists apontamentos_update_own on public.apontamentos;
-create policy apontamentos_update_own on public.apontamentos for update to authenticated using ((select auth.uid())=user_id) with check ((select auth.uid())=user_id);
+create policy apontamentos_update_own on public.apontamentos for update to authenticated using ((select auth.uid())=user_id or public.current_user_is_admin()) with check ((select auth.uid())=user_id or public.current_user_is_admin());
+
+drop policy if exists utility_meters_select on public.utility_meters;
+create policy utility_meters_select on public.utility_meters for select to authenticated using (true);
+drop policy if exists utility_meters_insert on public.utility_meters;
+create policy utility_meters_insert on public.utility_meters for insert to authenticated with check ((select auth.uid()) is not null);
+drop policy if exists utility_meters_update on public.utility_meters;
+create policy utility_meters_update on public.utility_meters for update to authenticated using ((select auth.uid()) is not null) with check ((select auth.uid()) is not null);
+
+drop policy if exists utility_readings_select on public.utility_readings;
+create policy utility_readings_select on public.utility_readings for select to authenticated using ((user_id=(select auth.uid()) or public.current_user_is_admin()));
+drop policy if exists utility_readings_insert on public.utility_readings;
+create policy utility_readings_insert on public.utility_readings for insert to authenticated with check ((select auth.uid())=user_id);
+drop policy if exists utility_readings_update on public.utility_readings;
+create policy utility_readings_update on public.utility_readings for update to authenticated using ((user_id=(select auth.uid()) or public.current_user_is_admin())) with check ((user_id=(select auth.uid()) or public.current_user_is_admin()));
+
+grant select,insert,update on public.utility_meters to authenticated;
+grant select,insert,update on public.utility_readings to authenticated;
+
+drop policy if exists utility_evidence_insert_self on storage.objects;
+create policy utility_evidence_insert_self on storage.objects for insert to authenticated with check (bucket_id='utility-evidence' and (storage.foldername(name))[1]=(select auth.uid())::text);
+drop policy if exists utility_evidence_select_self on storage.objects;
+create policy utility_evidence_select_self on storage.objects for select to authenticated using (bucket_id='utility-evidence' and (storage.foldername(name))[1]=(select auth.uid())::text);
+drop policy if exists utility_evidence_delete_self on storage.objects;
+create policy utility_evidence_delete_self on storage.objects for delete to authenticated using (bucket_id='utility-evidence' and (storage.foldername(name))[1]=(select auth.uid())::text);
 
 drop policy if exists material_anexos_select_own on public.material_anexos;
-create policy material_anexos_select_own on public.material_anexos for select to authenticated using ((select auth.uid())=uploaded_by);
+create policy material_anexos_select_own on public.material_anexos for select to authenticated using ((select auth.uid())=uploaded_by or public.current_user_is_admin());
 drop policy if exists material_anexos_insert_own on public.material_anexos;
 create policy material_anexos_insert_own on public.material_anexos for insert to authenticated with check ((select auth.uid())=uploaded_by);
 
