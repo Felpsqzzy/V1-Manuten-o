@@ -21,12 +21,9 @@
       try{
         const d=frame.contentDocument||frame.contentWindow.document;
         const head=d.head;
-        if(!head.querySelector('[data-biotrop-enhancements-css]')){
-          const link=d.createElement('link');link.rel='stylesheet';link.href='/assets/css/biotrop-enhancements.css';link.dataset.biotropEnhancementsCss='1';head.appendChild(link);
-        }
-        if(!head.querySelector('[data-biotrop-enhancements-js]')){
-          const script=d.createElement('script');script.src='/assets/js/biotrop-enhancements.js';script.defer=true;script.dataset.biotropEnhancementsJs='1';head.appendChild(script);
-        }
+        if(!head.querySelector('[data-biotrop-enhancements-css]')){const link=d.createElement('link');link.rel='stylesheet';link.href='/assets/css/biotrop-enhancements.css';link.dataset.biotropEnhancementsCss='1';head.appendChild(link)}
+        if(!head.querySelector('[data-biotrop-enhancements-js]')){const script=d.createElement('script');script.src='/assets/js/biotrop-enhancements.js';script.defer=true;script.dataset.biotropEnhancementsJs='1';head.appendChild(script)}
+        if(!head.querySelector('[data-biotrop-scm-js]')){const script2=d.createElement('script');script2.src='/assets/js/scm-approval-fix.js';script2.defer=true;script2.dataset.biotropScmJs='1';head.appendChild(script2)}
         document.getElementById('boot').classList.add('hide');
       }catch(e){document.getElementById('boot').textContent='Não foi possível carregar a aplicação.';console.error(e)}
     });
