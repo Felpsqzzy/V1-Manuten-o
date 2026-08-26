@@ -15,10 +15,12 @@
       const res=await fetch('./app.html?nocache='+Date.now(),{cache:'no-store'});
       if(!res.ok) throw new Error('HTTP '+res.status+' ao carregar app.html');
       let html=await res.text();
-      const extras='\n<link rel="stylesheet" href="/assets/css/biotrop-enhancements.css" data-biotrop-enhancements-css>\n<script src="/assets/js/biotrop-enhancements.js" defer data-biotrop-enhancements-js><\\/script>\n<script src="/assets/js/scm-approval-fix.js" defer data-biotrop-scm-js><\\/script>\n';
-      if(/<\\/head>/i.test(html)) html=html.replace(/<\\/head>/i,extras+'</head>');
+      const extras='\n<link rel="stylesheet" href="/assets/css/biotrop-enhancements.css" data-biotrop-enhancements-css>\n<script src="/assets/js/biotrop-enhancements.js" defer data-biotrop-enhancements-js><\/script>\n<script src="/assets/js/scm-approval-fix.js" defer data-biotrop-scm-js><\/script>\n';
+      if(html.toLowerCase().includes('</head>')) html=html.replace(/<\/head>/i,extras+'</head>');
       else html=extras+html;
-      document.open();document.write(html);document.close();
+      document.open();
+      document.write(html);
+      document.close();
     }catch(err){
       boot.innerHTML='<div style="max-width:720px;padding:24px;text-align:center"><h2 style="margin:0 0 8px">BIOTROP não conseguiu carregar</h2><p style="opacity:.8">'+String(err.message||err)+'</p><button onclick="location.reload()" style="padding:10px 16px;border:0;border-radius:10px;cursor:pointer">Tentar novamente</button></div>';
       console.error(err);
