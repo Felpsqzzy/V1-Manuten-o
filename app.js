@@ -1,12 +1,14 @@
 /* BIOTROP • camada de aplicação moderna
- * Mantém o app legado intacto e corrige autenticação, sessão e pequenos ajustes de UI.
- * Usa o mesmo cliente Supabase já criado pelo app principal (SB).
+ * Autenticação, sessão persistente e correções de UI/UX.
+ * Este arquivo também normaliza os controles flutuantes para impedir
+ * sobreposição no canto inferior direito.
  */
 (function () {
   'use strict';
 
   let loginWatcher = null;
   let sessionBootstrapDone = false;
+  let floatingObserverStarted = false;
 
   function getSB() {
     try { return (typeof SB !== 'undefined' && SB) || window.SB || null; } catch (_) { return null; }
@@ -14,17 +16,145 @@
   function getState() {
     try { return (typeof STATE !== 'undefined' && STATE) || null; } catch (_) { return null; }
   }
+
   function toast(message, kind = 'info') {
     const old = document.querySelector('.bt-app-toast'); if (old) old.remove();
-    const node = document.createElement('div'); node.className = 'bt-app-toast'; node.textContent = message; node.dataset.kind = kind;
-    document.body.appendChild(node); window.setTimeout(() => node.remove(), 3500);
+    const node = document.createElement('div');
+    node.className = 'bt-app-toast';
+    node.textContent = message;
+    node.dataset.kind = kind;
+    document.body.appendChild(node);
+    window.setTimeout(() => node.remove(), 3500);
   }
+
   function ensureToastStyle() {
     if (document.getElementById('bt-app-toast-style')) return;
-    const style = document.createElement('style'); style.id = 'bt-app-toast-style';
-    style.textContent = `.bt-app-toast{position:fixed;right:22px;bottom:22px;z-index:10050;padding:12px 16px;border-radius:13px;background:#0b2022;color:#ecf8f3;border:1px solid rgba(163,227,205,.16);box-shadow:0 18px 50px rgba(0,0,0,.25);font:700 12px/1.4 system-ui}.bt-app-toast[data-kind=error]{background:#33191b;color:#fecaca;border-color:rgba(248,113,113,.25)}.bt-app-toast[data-kind=success]{background:#08382c;color:#b7f7da;border-color:rgba(66,211,156,.25)}`;
+    const style = document.createElement('style');
+    style.id = 'bt-app-toast-style';
+    style.textContent = `
+      .bt-app-toast{position:fixed;right:22px;bottom:22px;z-index:10050;padding:12px 16px;border-radius:13px;background:#0b2022;color:#ecf8f3;border:1px solid rgba(163,227,205,.16);box-shadow:0 18px 50px rgba(0,0,0,.25);font:700 12px/1.4 system-ui}
+      .bt-app-toast[data-kind=error]{background:#33191b;color:#fecaca;border-color:rgba(248,113,113,.25)}
+      .bt-app-toast[data-kind=success]{background:#08382c;color:#b7f7da;border-color:rgba(66,211,156,.25)}
+    `;
     document.head.appendChild(style);
   }
+
+  /* ================================================================
+   * CONTROLES FLUTUANTES
+   * Impede que Tema / Aprovações / Registrar horímetro fiquem um sobre
+   * o outro. Os elementos continuam sendo os originais da aplicação;
+   * apenas são agrupados em uma barra visual única.
+   * ================================================================ */
+  function installFloatingActionFix() {
+    if (floatingObserverStarted) return;
+    floatingObserverStarted = true;
+
+    const style = document.createElement('style');
+    style.id = 'bt-floating-action-style';
+    style.textContent = `
+      .bt-floating-actions {
+        position: fixed !important;
+        right: 24px !important;
+        bottom: 22px !important;
+        z-index: 9000 !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        justify-content: flex-end !important;
+        gap: 10px !important;
+        width: auto !important;
+        max-width: calc(100vw - 32px) !important;
+        pointer-events: none !important;
+      }
+      .bt-floating-actions > * {
+        position: static !important;
+        inset: auto !important;
+        margin: 0 !important;
+        transform: none !important;
+        pointer-events: auto !important;
+        flex: 0 0 auto !important;
+      }
+      .bt-floating-actions .bt-float-theme,
+      .bt-floating-actions .bt-float-approval,
+      .bt-floating-actions .bt-float-meter {
+        min-height: 42px !important;
+        white-space: nowrap !important;
+      }
+      .bt-floating-actions .bt-float-meter {
+        min-width: 168px !important;
+      }
+      .bt-floating-actions .bt-float-theme {
+        min-width: 92px !important;
+      }
+      .bt-floating-actions .bt-float-approval {
+        min-width: 120px !important;
+      }
+      @media (max-width: 760px) {
+        .bt-floating-actions {
+          right: 12px !important;
+          bottom: 12px !important;
+          gap: 7px !important;
+          max-width: calc(100vw - 24px) !important;
+          overflow-x: auto !important;
+          padding: 2px !important;
+          scrollbar-width: none !important;
+        }
+        .bt-floating-actions::-webkit-scrollbar { display:none !important; }
+        .bt-floating-actions .bt-float-meter { min-width: 0 !important; }
+        .bt-floating-actions .bt-float-theme { min-width: 0 !important; }
+        .bt-floating-actions .bt-float-approval { min-width: 0 !important; }
+      }
+      body.bt-floating-fixed { padding-bottom: 76px !important; }
+      .modal-backdrop { z-index: 20000 !important; }
+      .modal, .settings-modal, .approval-modal { position: relative; z-index: 20001 !important; }
+    `;
+    document.head.appendChild(style);
+
+    function findControls() {
+      const all = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+      const visible = el => {
+        if (!el || el.closest('.bt-floating-actions')) return false;
+        const s = getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+      };
+      const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+      const meter = all.find(el => visible(el) && /registrar\s+hor[ií]metro|cadastrar\s+hor[ií]metro|novo\s+apontamento/i.test(label(el)));
+      const theme = all.find(el => visible(el) && /tema|modo\s+(escuro|claro)|dark|light/i.test(label(el)));
+      const approval = all.find(el => visible(el) && /aprova(ç|c)[oõ]es/i.test(label(el)));
+      return { meter, theme, approval };
+    }
+
+    function mount() {
+      const { meter, theme, approval } = findControls();
+      const controls = [theme, approval, meter].filter(Boolean);
+      if (!controls.length) return;
+
+      let wrap = document.querySelector('.bt-floating-actions');
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'bt-floating-actions';
+        wrap.setAttribute('aria-label', 'Ações rápidas');
+        document.body.appendChild(wrap);
+      }
+
+      controls.forEach((el) => {
+        if (!el) return;
+        if (el === meter) el.classList.add('bt-float-meter');
+        if (el === theme) el.classList.add('bt-float-theme');
+        if (el === approval) el.classList.add('bt-float-approval');
+        wrap.appendChild(el);
+      });
+
+      document.body.classList.add('bt-floating-fixed');
+    }
+
+    mount();
+    const observer = new MutationObserver(() => window.requestAnimationFrame(mount));
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   function findLoginInputs() {
     const root = document.querySelector('.login-wrap'); if (!root) return null;
     const inputs = Array.from(root.querySelectorAll('input'));
@@ -33,16 +163,25 @@
     const submit = root.querySelector('.submit-btn,button[type="submit"]');
     return email && password && submit ? { root, email, password, submit } : null;
   }
+
   function setLoginBusy(ui, busy) {
-    ui.submit.disabled = busy; ui.submit.style.opacity = busy ? '.65' : ''; ui.submit.dataset.btBusy = busy ? '1' : '0';
+    ui.submit.disabled = busy;
+    ui.submit.style.opacity = busy ? '.65' : '';
+    ui.submit.dataset.btBusy = busy ? '1' : '0';
     if (busy) ui.submit.setAttribute('aria-busy', 'true'); else ui.submit.removeAttribute('aria-busy');
   }
+
   function showLoginError(root, message) {
     let el = root.querySelector('.bt-auth-error');
-    if (!el) { el = document.createElement('div'); el.className = 'login-error bt-auth-error'; (root.querySelector('.right-inner') || root).appendChild(el); }
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'login-error bt-auth-error';
+      (root.querySelector('.right-inner') || root).appendChild(el);
+    }
     el.textContent = message;
     el.style.display = message ? '' : 'none';
   }
+
   async function hydrateCurrentUser(session) {
     const sb = getSB(), state = getState();
     if (!sb || !state || !session?.user) return false;
@@ -83,6 +222,7 @@
     try { if (typeof render === 'function') render(); } catch (_) {}
     return true;
   }
+
   async function doLogin(ui) {
     const sb = getSB(); if (!sb) return showLoginError(ui.root, 'Backend de autenticação indisponível.');
     if (ui.submit.dataset.btBusy === '1') return;
@@ -101,6 +241,7 @@
       toast(raw, 'error');
     } finally { setLoginBusy(ui, false); }
   }
+
   function bindLogin() {
     const ui = findLoginInputs(); if (!ui || ui.submit.dataset.btAuthBound === '1') return !!ui;
     ui.submit.dataset.btAuthBound = '1';
@@ -108,25 +249,61 @@
     ui.password.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); doLogin(ui); } }, true);
     return true;
   }
+
   async function bootstrapAuth() {
     const sb = getSB(); if (!sb || sessionBootstrapDone) return; sessionBootstrapDone = true;
     try {
-      const { data } = await sb.auth.getSession(); if (data?.session) await hydrateCurrentUser(data.session);
+      const { data } = await sb.auth.getSession();
+      if (data?.session) await hydrateCurrentUser(data.session);
       sb.auth.onAuthStateChange((_event, session) => { if (session) hydrateCurrentUser(session); });
     } catch (error) { console.warn('BIOTROP auth bootstrap:', error); }
   }
+
   function addBrandMicrocopy() {
     const row = document.querySelector('.brand-row');
-    if (row && !row.querySelector('.bt-brand-caption')) { const box = document.createElement('div'); box.className = 'bt-brand-caption'; box.innerHTML = '<strong>BIOTROP</strong><span>GESTÃO INDUSTRIAL</span>'; row.appendChild(box); }
+    if (row && !row.querySelector('.bt-brand-caption')) {
+      const box = document.createElement('div');
+      box.className = 'bt-brand-caption';
+      box.innerHTML = '<strong>BIOTROP</strong><span>GESTÃO INDUSTRIAL</span>';
+      row.appendChild(box);
+    }
     const sb = document.querySelector('.sidebar-brand');
-    if (sb && !sb.querySelector('.bt-sidebar-caption')) { const box = document.createElement('div'); box.className = 'bt-sidebar-caption'; box.innerHTML = '<strong>BIOTROP</strong><span>CONTROL ROOM</span>'; sb.appendChild(box); }
+    if (sb && !sb.querySelector('.bt-sidebar-caption')) {
+      const box = document.createElement('div');
+      box.className = 'bt-sidebar-caption';
+      box.innerHTML = '<strong>BIOTROP</strong><span>CONTROL ROOM</span>';
+      sb.appendChild(box);
+    }
   }
-  function start(){ensureToastStyle();bindLogin();addBrandMicrocopy();bootstrapAuth();}
-  function startLoginWatcher(){
-    if(loginWatcher)return; let ticks=0;
-    loginWatcher=window.setInterval(()=>{ticks++;start();if(ticks>150||document.querySelector('.shell')){clearInterval(loginWatcher);loginWatcher=null;}},400);
+
+  function start() {
+    ensureToastStyle();
+    bindLogin();
+    addBrandMicrocopy();
+    bootstrapAuth();
+    installFloatingActionFix();
   }
-  document.addEventListener('click', event => { const mobile=event.target.closest?.('.mobile-menu-btn'); if(!mobile)return; const sidebar=document.querySelector('.sidebar'); if(sidebar)sidebar.classList.toggle('sidebar-open'); }, false);
-  window.addEventListener('load',()=>{start();startLoginWatcher();});
+
+  function startLoginWatcher() {
+    if (loginWatcher) return;
+    let ticks = 0;
+    loginWatcher = window.setInterval(() => {
+      ticks++;
+      start();
+      if (ticks > 150 || document.querySelector('.shell')) {
+        clearInterval(loginWatcher);
+        loginWatcher = null;
+      }
+    }, 400);
+  }
+
+  document.addEventListener('click', event => {
+    const mobile = event.target.closest?.('.mobile-menu-btn');
+    if (!mobile) return;
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) sidebar.classList.toggle('sidebar-open');
+  }, false);
+
+  window.addEventListener('load', () => { start(); startLoginWatcher(); });
   start();
 })();
