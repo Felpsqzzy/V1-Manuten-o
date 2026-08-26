@@ -1,62 +1,21 @@
 (function(){'use strict';
-const sb = window.SB || (window.supabase && window.supabaseClient) || null;
+const sb = (typeof SB !== 'undefined' ? SB : null);
 if(!sb){return;}
 const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const user = () => (typeof STATE !== 'undefined' ? STATE.currentUser : null);
 const uid = () => user()?.dbId || user()?.id || null;
 const role = () => String(user()?.role_code || user()?.role || user()?.perfil || user()?.perfilId || '').toLowerCase();
-const isApprover = () => {
-  try { if(typeof isAdminUser === 'function' && isAdminUser(user())) return true; } catch(_){ }
-  return ['admin','administrator','administrador','gestor','manager','aprovador','pcnm','pcm'].some(x=>role().includes(x));
-};
+const isApprover = () => { try { if(typeof isAdminUser === 'function' && isAdminUser(user())) return true; } catch(_){} return ['admin','administrator','administrador','gestor','manager','aprovador','pcnm','pcm'].some(x=>role().includes(x)); };
 const notify = msg => { const old=document.querySelector('.br-toast'); if(old) old.remove(); const el=document.createElement('div'); el.className='br-toast'; el.textContent=msg; document.body.appendChild(el); setTimeout(()=>el.remove(),3200); };
-function clock(){
-  let el=document.getElementById('br-live-clock');
-  if(!el){el=document.createElement('div');el.id='br-live-clock';el.innerHTML='<span class="br-pulse"></span><div><strong>--:--:--</strong><small>Horário local</small></div>';document.body.appendChild(el);}
-  const tick=()=>{const d=new Date();el.querySelector('strong').textContent=d.toLocaleTimeString('pt-BR',{hour12:false});el.querySelector('small').textContent=d.toLocaleDateString('pt-BR');};tick();if(!window.__brClock)window.__brClock=setInterval(tick,1000);
-}
+function clock(){ let el=document.getElementById('br-live-clock'); if(!el){el=document.createElement('div');el.id='br-live-clock';el.innerHTML='<span class="br-pulse"></span><div><strong>--:--:--</strong><small>Horário local</small></div>';document.body.appendChild(el);} const tick=()=>{const d=new Date();el.querySelector('strong').textContent=d.toLocaleTimeString('pt-BR',{hour12:false});el.querySelector('small').textContent=d.toLocaleDateString('pt-BR');};tick();if(!window.__brClock)window.__brClock=setInterval(tick,1000); }
 function sidebarFix(){document.body.classList.add('br-shell-ready');}
-async function profilePicture(){
-  const save=document.getElementById('be-save'); const input=document.getElementById('be-avatar-file'); if(!save||!input||save.dataset.brReady)return;
-  save.dataset.brReady='1'; save.addEventListener('click',()=>setTimeout(async()=>{
-    const file=input.files?.[0], id=uid(); if(!file||!id)return;
-    if(file.size>5*1024*1024){notify('A foto deve ter no máximo 5 MB.');return;}
-    const ext=(file.name.split('.').pop()||'jpg').toLowerCase(); const path=`${id}/profile-${Date.now()}.${ext}`;
-    const up=await sb.storage.from('profile-pictures').upload(path,file,{upsert:true,contentType:file.type,cacheControl:'3600'});
-    if(up.error){notify('Não foi possível salvar a foto.');return;}
-    const url=sb.storage.from('profile-pictures').getPublicUrl(path).data.publicUrl;
-    const r=await sb.from('profiles').update({avatar_url:url,updated_at:new Date().toISOString()}).eq('id',id);
-    if(r.error)notify('Foto enviada, mas o perfil não foi atualizado.'); else notify('Foto de perfil atualizada.');
-  },500));
-}
-function panelButton(){
-  if(!isApprover() || document.getElementById('br-approval-open')) return;
-  const b=document.createElement('button'); b.id='br-approval-open'; b.textContent='Aprovações'; b.onclick=renderApprovalPanel; document.body.appendChild(b);
-}
-async function renderApprovalPanel(){
-  let root=document.getElementById('br-approval-root'); if(root)root.remove();
-  root=document.createElement('div'); root.id='br-approval-root'; root.innerHTML='<div class="br-backdrop"><section class="br-approval"><header><div><span class="br-eyebrow">PCNM / GESTOR</span><h2>Painel de Aprovações</h2><p>Somente registros pendentes aparecem para decisão.</p></div><button id="br-close">×</button></header><div class="br-tabs"><button class="active" data-br-tab="apontamentos">Apontamentos</button><button data-br-tab="materiais">Materiais</button></div><div id="br-approval-body"><div class="br-loading">Carregando…</div></div></section></div>';
-  document.body.appendChild(root);root.querySelector('#br-close').onclick=()=>root.remove();root.querySelector('.br-backdrop').onclick=e=>{if(e.target.classList.contains('br-backdrop'))root.remove()};root.querySelectorAll('[data-br-tab]').forEach(x=>x.onclick=()=>{root.querySelectorAll('[data-br-tab]').forEach(y=>y.classList.remove('active'));x.classList.add('active');loadApprovals(x.dataset.brTab);}); await loadApprovals('apontamentos');
-}
-async function loadApprovals(type){
-  const body=document.getElementById('br-approval-body'); if(!body)return;body.innerHTML='<div class="br-loading">Carregando…</div>';
-  const table=type==='apontamentos'?'apontamentos':'materiais'; const {data,error}=await sb.from(table).select('*').eq('status','Pendente').order('created_at',{ascending:false});
-  if(error){body.innerHTML='<div class="br-empty">Erro ao carregar: '+esc(error.message)+'</div>';return;}
-  if(!data?.length){body.innerHTML='<div class="br-empty">Nenhum registro pendente.</div>';return;}
-  body.innerHTML=`<div class="br-table-wrap"><table class="br-table"><thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead><tbody>${data.map(r=>`<tr><td>${new Date(r.created_at).toLocaleString('pt-BR')}</td><td>${esc(r.descricao || r.tipo || r.codigo_item || '—')}</td><td>${esc(r.valor ?? r.quantidade ?? '—')} ${esc(r.unidade||'')}</td><td><span class="br-status pending">Pendente</span></td><td><button class="br-approve" data-br-approve="${esc(r.id)}" data-br-type="${type}">Aprovar</button><button class="br-reject" data-br-reject="${esc(r.id)}" data-br-type="${type}">Rejeitar</button></td></tr>`).join('')}</tbody></table></div>`;
-  body.querySelectorAll('[data-br-approve]').forEach(b=>b.onclick=()=>decide(b.dataset.brType,b.dataset.brApprove,'Aprovado'));
-  body.querySelectorAll('[data-br-reject]').forEach(b=>b.onclick=()=>{const reason=prompt('Motivo da rejeição:');if(reason)decide(b.dataset.brType,b.dataset.brReject,'Rejeitado',reason);});
-}
-async function decide(type,id,status,reason=''){
-  const table=type==='apontamentos'?'apontamentos':'materiais'; const patch=type==='apontamentos'?{status,aprovado_por:uid(),aprovado_em:new Date().toISOString(),rejeitado_motivo:reason}:{status,aprovado_por:uid(),aprovado_em:new Date().toISOString(),rejeitado_motivo:reason};
-  const r=await sb.from(table).update(patch).eq('id',id); if(r.error){notify('Não foi possível atualizar o status.');return;} notify(status+' com sucesso.'); loadApprovals(type);
-}
-async function approvedDashboard(){
-  const {data}=await sb.from('apontamentos').select('created_at,valor,tipo').eq('status','Aprovado').order('created_at',{ascending:false}).limit(24); const box=document.querySelector('.industrial-chart'); if(!box||!data)return; const values=data.map(x=>Number(x.valor)||0).reverse(); const max=Math.max(1,...values); let line=box.querySelector('.br-approved-line');if(!line){line=document.createElement('div');line.className='industrial-chart-line br-approved-line';box.appendChild(line);}line.innerHTML=values.slice(-12).map(v=>`<span style="height:${Math.max(8,v/max*100)}%" title="${v}"></span>`).join('');
-}
-function realtime(){
-  if(window.__brRealtime)return; window.__brRealtime=sb.channel('br-business-live').on('postgres_changes',{event:'*',schema:'public',table:'apontamentos'},()=>{approvedDashboard();if(document.getElementById('br-approval-root'))loadApprovals('apontamentos');}).on('postgres_changes',{event:'*',schema:'public',table:'materiais'},()=>{if(document.getElementById('br-approval-root'))loadApprovals('materiais');}).subscribe();
-}
-function init(){clock();sidebarFix();panelButton();profilePicture();approvedDashboard();realtime(); if(!window.__brTicker)window.__brTicker=setInterval(()=>{clock();panelButton();profilePicture();approvedDashboard();},12000);}
+async function profilePicture(){const save=document.getElementById('be-save'),input=document.getElementById('be-avatar-file');if(!save||!input||save.dataset.brReady)return;save.dataset.brReady='1';save.addEventListener('click',()=>setTimeout(async()=>{const file=input.files?.[0],id=uid();if(!file||!id)return;if(file.size>5*1024*1024){notify('A foto deve ter no máximo 5 MB.');return;}const ext=(file.name.split('.').pop()||'jpg').toLowerCase(),path=`${id}/profile-${Date.now()}.${ext}`;const up=await sb.storage.from('profile-pictures').upload(path,file,{upsert:true,contentType:file.type,cacheControl:'3600'});if(up.error){notify('Não foi possível salvar a foto.');return;}const url=sb.storage.from('profile-pictures').getPublicUrl(path).data.publicUrl;const r=await sb.from('profiles').update({avatar_url:url,updated_at:new Date().toISOString()}).eq('id',id);if(r.error)notify('Foto enviada, mas o perfil não foi atualizado.');else notify('Foto de perfil atualizada.');},500));}
+function panelButton(){if(!isApprover()||document.getElementById('br-approval-open'))return;const b=document.createElement('button');b.id='br-approval-open';b.textContent='Aprovações';b.onclick=renderApprovalPanel;document.body.appendChild(b);}
+async function renderApprovalPanel(){let root=document.getElementById('br-approval-root');if(root)root.remove();root=document.createElement('div');root.id='br-approval-root';root.innerHTML='<div class="br-backdrop"><section class="br-approval"><header><div><span class="br-eyebrow">PCNM / GESTOR</span><h2>Painel de Aprovações</h2><p>Somente registros pendentes aparecem para decisão.</p></div><button id="br-close">×</button></header><div class="br-tabs"><button class="active" data-br-tab="apontamentos">Apontamentos</button><button data-br-tab="materiais">Materiais</button></div><div id="br-approval-body"><div class="br-loading">Carregando…</div></div></section></div>';document.body.appendChild(root);root.querySelector('#br-close').onclick=()=>root.remove();root.querySelector('.br-backdrop').onclick=e=>{if(e.target.classList.contains('br-backdrop'))root.remove()};root.querySelectorAll('[data-br-tab]').forEach(x=>x.onclick=()=>{root.querySelectorAll('[data-br-tab]').forEach(y=>y.classList.remove('active'));x.classList.add('active');loadApprovals(x.dataset.brTab);});await loadApprovals('apontamentos');}
+async function loadApprovals(type){const body=document.getElementById('br-approval-body');if(!body)return;body.innerHTML='<div class="br-loading">Carregando…</div>';const table=type==='apontamentos'?'apontamentos':'materiais';const {data,error}=await sb.from(table).select('*').eq('status','Pendente').order('created_at',{ascending:false});if(error){body.innerHTML='<div class="br-empty">Erro ao carregar: '+esc(error.message)+'</div>';return;}if(!data?.length){body.innerHTML='<div class="br-empty">Nenhum registro pendente.</div>';return;}body.innerHTML=`<div class="br-table-wrap"><table class="br-table"><thead><tr><th>Data</th><th>Descrição</th><th>Valor</th><th>Status</th><th>Ações</th></tr></thead><tbody>${data.map(r=>`<tr><td>${new Date(r.created_at).toLocaleString('pt-BR')}</td><td>${esc(r.descricao||r.tipo||r.codigo_item||'—')}</td><td>${esc(r.valor??r.quantidade??'—')} ${esc(r.unidade||'')}</td><td><span class="br-status pending">Pendente</span></td><td><button class="br-approve" data-br-approve="${esc(r.id)}" data-br-type="${type}">Aprovar</button><button class="br-reject" data-br-reject="${esc(r.id)}" data-br-type="${type}">Rejeitar</button></td></tr>`).join('')}</tbody></table></div>`;body.querySelectorAll('[data-br-approve]').forEach(b=>b.onclick=()=>decide(b.dataset.brType,b.dataset.brApprove,'Aprovado'));body.querySelectorAll('[data-br-reject]').forEach(b=>b.onclick=()=>{const reason=prompt('Motivo da rejeição:');if(reason)decide(b.dataset.brType,b.dataset.brReject,'Rejeitado',reason);});}
+async function decide(type,id,status,reason=''){const table=type==='apontamentos'?'apontamentos':'materiais';const patch={status,aprovado_por:uid(),aprovado_em:new Date().toISOString(),rejeitado_motivo:reason};const r=await sb.from(table).update(patch).eq('id',id);if(r.error){notify('Não foi possível atualizar o status.');return;}notify(status+' com sucesso.');loadApprovals(type);}
+async function approvedDashboard(){const {data}=await sb.from('apontamentos').select('created_at,valor,tipo').eq('status','Aprovado').order('created_at',{ascending:false}).limit(24);const box=document.querySelector('.industrial-chart');if(!box||!data)return;const values=data.map(x=>Number(x.valor)||0).reverse(),max=Math.max(1,...values);let line=box.querySelector('.br-approved-line');if(!line){line=document.createElement('div');line.className='industrial-chart-line br-approved-line';box.appendChild(line);}line.innerHTML=values.slice(-12).map(v=>`<span style="height:${Math.max(8,v/max*100)}%" title="${v}"></span>`).join('');}
+function realtime(){if(window.__brRealtime)return;window.__brRealtime=sb.channel('br-business-live').on('postgres_changes',{event:'*',schema:'public',table:'apontamentos'},()=>{approvedDashboard();if(document.getElementById('br-approval-root'))loadApprovals('apontamentos');}).on('postgres_changes',{event:'*',schema:'public',table:'materiais'},()=>{if(document.getElementById('br-approval-root'))loadApprovals('materiais');}).subscribe();}
+function init(){clock();sidebarFix();panelButton();profilePicture();approvedDashboard();realtime();if(!window.__brTicker)window.__brTicker=setInterval(()=>{clock();panelButton();profilePicture();approvedDashboard();},12000);}
 const mo=new MutationObserver(()=>init());mo.observe(document.body,{childList:true,subtree:true});window.addEventListener('load',()=>setTimeout(init,500));
 })();
