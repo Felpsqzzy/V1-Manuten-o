@@ -1,14 +1,16 @@
-/* BIOTROP • camada de aplicação moderna
- * Autenticação, sessão persistente e correções de UI/UX.
- * Este arquivo também normaliza os controles flutuantes para impedir
- * sobreposição no canto inferior direito.
+/* BIOTROP • camada de aplicação V8
+ * Autenticação persistente + normalização visual industrial.
+ * As ações que antes ficavam sobrepostas no canto inferior agora entram
+ * no fluxo da aplicação: configurações ficam no usuário e ações operacionais
+ * ficam em uma barra contextual no topo do conteúdo.
  */
 (function () {
   'use strict';
 
   let loginWatcher = null;
   let sessionBootstrapDone = false;
-  let floatingObserverStarted = false;
+  let uiObserverStarted = false;
+  let clockTimer = null;
 
   function getSB() {
     try { return (typeof SB !== 'undefined' && SB) || window.SB || null; } catch (_) { return null; }
@@ -32,127 +34,66 @@
     const style = document.createElement('style');
     style.id = 'bt-app-toast-style';
     style.textContent = `
-      .bt-app-toast{position:fixed;right:22px;bottom:22px;z-index:10050;padding:12px 16px;border-radius:13px;background:#0b2022;color:#ecf8f3;border:1px solid rgba(163,227,205,.16);box-shadow:0 18px 50px rgba(0,0,0,.25);font:700 12px/1.4 system-ui}
+      .bt-app-toast{position:fixed;right:22px;bottom:22px;z-index:30000;padding:12px 16px;border-radius:13px;background:#0b2022;color:#ecf8f3;border:1px solid rgba(163,227,205,.16);box-shadow:0 18px 50px rgba(0,0,0,.25);font:700 12px/1.4 system-ui}
       .bt-app-toast[data-kind=error]{background:#33191b;color:#fecaca;border-color:rgba(248,113,113,.25)}
       .bt-app-toast[data-kind=success]{background:#08382c;color:#b7f7da;border-color:rgba(66,211,156,.25)}
     `;
     document.head.appendChild(style);
   }
 
-  /* ================================================================
-   * CONTROLES FLUTUANTES
-   * Impede que Tema / Aprovações / Registrar horímetro fiquem um sobre
-   * o outro. Os elementos continuam sendo os originais da aplicação;
-   * apenas são agrupados em uma barra visual única.
-   * ================================================================ */
-  function installFloatingActionFix() {
-    if (floatingObserverStarted) return;
-    floatingObserverStarted = true;
+  function loadIndustrialStyles() {
+    if (document.getElementById('biotrop-industrial-v8-css')) return;
+    const link = document.createElement('link');
+    link.id = 'biotrop-industrial-v8-css';
+    link.rel = 'stylesheet';
+    link.href = './assets/css/industrial-v8.css?v=8';
+    document.head.appendChild(link);
+  }
 
-    const style = document.createElement('style');
-    style.id = 'bt-floating-action-style';
-    style.textContent = `
-      .bt-floating-actions {
-        position: fixed !important;
-        right: 24px !important;
-        bottom: 22px !important;
-        z-index: 9000 !important;
-        display: flex !important;
-        flex-direction: row !important;
-        align-items: center !important;
-        justify-content: flex-end !important;
-        gap: 10px !important;
-        width: auto !important;
-        max-width: calc(100vw - 32px) !important;
-        pointer-events: none !important;
-      }
-      .bt-floating-actions > * {
-        position: static !important;
-        inset: auto !important;
-        margin: 0 !important;
-        transform: none !important;
-        pointer-events: auto !important;
-        flex: 0 0 auto !important;
-      }
-      .bt-floating-actions .bt-float-theme,
-      .bt-floating-actions .bt-float-approval,
-      .bt-floating-actions .bt-float-meter {
-        min-height: 42px !important;
-        white-space: nowrap !important;
-      }
-      .bt-floating-actions .bt-float-meter {
-        min-width: 168px !important;
-      }
-      .bt-floating-actions .bt-float-theme {
-        min-width: 92px !important;
-      }
-      .bt-floating-actions .bt-float-approval {
-        min-width: 120px !important;
-      }
-      @media (max-width: 760px) {
-        .bt-floating-actions {
-          right: 12px !important;
-          bottom: 12px !important;
-          gap: 7px !important;
-          max-width: calc(100vw - 24px) !important;
-          overflow-x: auto !important;
-          padding: 2px !important;
-          scrollbar-width: none !important;
-        }
-        .bt-floating-actions::-webkit-scrollbar { display:none !important; }
-        .bt-floating-actions .bt-float-meter { min-width: 0 !important; }
-        .bt-floating-actions .bt-float-theme { min-width: 0 !important; }
-        .bt-floating-actions .bt-float-approval { min-width: 0 !important; }
-      }
-      body.bt-floating-fixed { padding-bottom: 76px !important; }
-      .modal-backdrop { z-index: 20000 !important; }
-      .modal, .settings-modal, .approval-modal { position: relative; z-index: 20001 !important; }
-    `;
-    document.head.appendChild(style);
+  function setV8Theme() {
+    document.body.classList.add('bt-v8');
+    try {
+      const saved = localStorage.getItem('biotrop-theme');
+      const theme = saved || document.body.dataset.theme || 'dark';
+      document.body.classList.toggle('bt-light-v8', /light|claro/i.test(theme));
+      document.documentElement.dataset.btTheme = /light|claro/i.test(theme) ? 'light' : 'dark';
+    } catch (_) {}
+  }
 
-    function findControls() {
-      const all = Array.from(document.querySelectorAll('button, a, [role="button"]'));
-      const visible = el => {
-        if (!el || el.closest('.bt-floating-actions')) return false;
-        const s = getComputedStyle(el);
-        const r = el.getBoundingClientRect();
-        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
-      };
-      const label = el => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  function keepThemeInSync() {
+    setV8Theme();
+    const observer = new MutationObserver(() => setV8Theme());
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+  }
 
-      const meter = all.find(el => visible(el) && /registrar\s+hor[ií]metro|cadastrar\s+hor[ií]metro|novo\s+apontamento/i.test(label(el)));
-      const theme = all.find(el => visible(el) && /tema|modo\s+(escuro|claro)|dark|light/i.test(label(el)));
-      const approval = all.find(el => visible(el) && /aprova(ç|c)[oõ]es/i.test(label(el)));
-      return { meter, theme, approval };
+  function updateLiveClock() {
+    const now = new Date();
+    const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(now);
+    const date = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' }).format(now);
+    document.querySelectorAll('[data-live-clock], .industrial-status-card strong').forEach(el => {
+      if (el) { el.textContent = time; el.setAttribute('aria-label', `Horário atual ${time}`); }
+    });
+    document.querySelectorAll('[data-live-date], .industrial-status-card > span:not(.industrial-status-line)').forEach(el => {
+      const text = (el.textContent || '').trim();
+      if (/\d{1,2}.*de.*\d{4}|\d{2}\/\d{2}\/\d{4}/i.test(text)) el.textContent = date;
+    });
+  }
+
+  function startLiveClock() {
+    if (clockTimer) return;
+    updateLiveClock();
+    clockTimer = window.setInterval(updateLiveClock, 1000);
+  }
+
+  function showLoginError(root, message) {
+    let el = root.querySelector('.bt-auth-error');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'login-error bt-auth-error';
+      (root.querySelector('.right-inner') || root).appendChild(el);
     }
-
-    function mount() {
-      const { meter, theme, approval } = findControls();
-      const controls = [theme, approval, meter].filter(Boolean);
-      if (!controls.length) return;
-
-      let wrap = document.querySelector('.bt-floating-actions');
-      if (!wrap) {
-        wrap = document.createElement('div');
-        wrap.className = 'bt-floating-actions';
-        wrap.setAttribute('aria-label', 'Ações rápidas');
-        document.body.appendChild(wrap);
-      }
-
-      controls.forEach((el) => {
-        if (!el) return;
-        if (el === meter) el.classList.add('bt-float-meter');
-        if (el === theme) el.classList.add('bt-float-theme');
-        if (el === approval) el.classList.add('bt-float-approval');
-        wrap.appendChild(el);
-      });
-
-      document.body.classList.add('bt-floating-fixed');
-    }
-
-    mount();
-    const observer = new MutationObserver(() => window.requestAnimationFrame(mount));
-    observer.observe(document.body, { childList: true, subtree: true });
+    el.textContent = message;
+    el.style.display = message ? '' : 'none';
   }
 
   function findLoginInputs() {
@@ -171,23 +112,13 @@
     if (busy) ui.submit.setAttribute('aria-busy', 'true'); else ui.submit.removeAttribute('aria-busy');
   }
 
-  function showLoginError(root, message) {
-    let el = root.querySelector('.bt-auth-error');
-    if (!el) {
-      el = document.createElement('div');
-      el.className = 'login-error bt-auth-error';
-      (root.querySelector('.right-inner') || root).appendChild(el);
-    }
-    el.textContent = message;
-    el.style.display = message ? '' : 'none';
-  }
-
   async function hydrateCurrentUser(session) {
     const sb = getSB(), state = getState();
     if (!sb || !state || !session?.user) return false;
-    const userId = session.user.id; let profile = null;
+    const userId = session.user.id;
+    let profile = null;
     try {
-      const result = await sb.from('profiles').select('id,name,full_name,email,phone,sector,department,avatar_url,role_code,app_role,active,is_active').eq('id', userId).maybeSingle();
+      const result = await sb.from('profiles').select('id,name,full_name,email,phone,sector,department,avatar_url,role_code,app_role,active,is_active,theme').eq('id', userId).maybeSingle();
       profile = result.data || null;
     } catch (_) {}
     const role = profile?.role_code || profile?.app_role || 'tecnico';
@@ -202,6 +133,7 @@
           app_role: role,
           active: true,
           is_active: true,
+          theme: 'dark',
           updated_at: new Date().toISOString()
         }).select('*').single();
         profile = result.data || null;
@@ -212,11 +144,13 @@
       email: session.user.email || profile?.email || '', usuario: session.user.email || profile?.email || '',
       nome: profile?.name || profile?.full_name || session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Usuário',
       role, role_code: role, perfil: role, perfilId: role,
-      avatar_url: profile?.avatar_url || null, phone: profile?.phone || ''
+      avatar_url: profile?.avatar_url || null, phone: profile?.phone || '',
+      theme: profile?.theme || 'dark'
     };
     try {
       state.screen = 'app'; if (!state.activeArea) state.activeArea = 'home';
       localStorage.setItem('biotrop_auth_uid', userId);
+      if (profile?.theme) localStorage.setItem('biotrop-theme', profile.theme);
     } catch (_) {}
     try { if (typeof hydrateV12 === 'function') await hydrateV12(); } catch (_) {}
     try { if (typeof render === 'function') render(); } catch (_) {}
@@ -251,12 +185,92 @@
   }
 
   async function bootstrapAuth() {
-    const sb = getSB(); if (!sb || sessionBootstrapDone) return; sessionBootstrapDone = true;
+    const sb = getSB(); if (!sb || sessionBootstrapDone) return;
+    sessionBootstrapDone = true;
     try {
       const { data } = await sb.auth.getSession();
       if (data?.session) await hydrateCurrentUser(data.session);
       sb.auth.onAuthStateChange((_event, session) => { if (session) hydrateCurrentUser(session); });
     } catch (error) { console.warn('BIOTROP auth bootstrap:', error); }
+  }
+
+  function findByLabel(regex, root = document) {
+    return Array.from(root.querySelectorAll('button,a,[role="button"]')).find(el => {
+      const s = getComputedStyle(el), r = el.getBoundingClientRect();
+      if (s.display === 'none' || s.visibility === 'hidden' || r.width < 1 || r.height < 1) return false;
+      return regex.test((el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim());
+    });
+  }
+
+  function installContextToolbar() {
+    const main = document.querySelector('.main-area');
+    if (!main) return;
+    let toolbar = main.querySelector('.bt-context-toolbar');
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.className = 'bt-context-toolbar';
+      toolbar.innerHTML = '<span class="bt-context-label">Ações da operação</span><div class="bt-context-actions"></div>';
+      Object.assign(toolbar.style, { display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px', marginBottom:'12px', minHeight:'0' });
+      toolbar.querySelector('.bt-context-actions').style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto';
+      toolbar.querySelector('.bt-context-label').style.cssText = 'font:700 10px/1 system-ui;letter-spacing:.14em;text-transform:uppercase;color:#73988f';
+      main.prepend(toolbar);
+    }
+    const actions = toolbar.querySelector('.bt-context-actions');
+    const buttons = Array.from(document.querySelectorAll('button,a,[role="button"]')).filter(el => {
+      if (el.closest('.bt-context-toolbar') || el.closest('.sidebar')) return false;
+      const text = (el.innerText || el.textContent || '').replace(/\s+/g,' ').trim();
+      return /registrar\s+hor[ií]metro|cadastrar\s+hor[ií]metro|aprova(ç|c)[oõ]es/i.test(text);
+    });
+    buttons.forEach(btn => {
+      btn.style.position='static'; btn.style.inset='auto'; btn.style.margin='0'; btn.style.transform='none';
+      actions.appendChild(btn);
+    });
+    toolbar.style.display = actions.children.length ? 'flex' : 'none';
+  }
+
+  function moveSettingsIntoUser() {
+    const footer = document.querySelector('.sidebar-footer');
+    if (!footer) return;
+    const candidates = Array.from(document.querySelectorAll('button,a,[role="button"]')).filter(el => {
+      if (el.closest('.sidebar-footer')) return false;
+      const text = (el.innerText || el.textContent || '').replace(/\s+/g,' ').trim();
+      return /^configura(ç|c)[oõ]es$|^configura(ç|c)[oõ]es\b/i.test(text);
+    });
+    candidates.forEach(btn => {
+      btn.classList.add('bt-settings-inline');
+      btn.style.position='static'; btn.style.inset='auto'; btn.style.transform='none';
+      footer.appendChild(btn);
+    });
+  }
+
+  function removeLayoutArtifacts() {
+    const candidates = Array.from(document.body.querySelectorAll('*'));
+    candidates.forEach(el => {
+      if (el.closest('.modal-backdrop,.modal,.settings-modal,.approval-modal,.bt-floating-actions,.sidebar')) return;
+      const s = getComputedStyle(el), r = el.getBoundingClientRect();
+      if (!['fixed','absolute'].includes(s.position)) return;
+      if (r.width < 500 || r.height > 105 || r.bottom < innerHeight - 120 || r.top > innerHeight) return;
+      const text = (el.innerText || el.textContent || '').replace(/\s+/g,' ').trim();
+      if (text.length > 12) return;
+      if (r.width > innerWidth * .45 && (s.borderStyle !== 'none' || s.outlineStyle !== 'none' || s.backgroundColor !== 'rgba(0, 0, 0, 0)')) {
+        el.classList.add('bt-hidden-layout-artifact');
+      }
+    });
+  }
+
+  function neutralizeOldFloatingDock() {
+    const dock = document.querySelector('.bt-floating-actions');
+    if (dock) dock.remove();
+    document.querySelectorAll('.bt-float-theme').forEach(el => { if (!el.closest('.sidebar')) el.style.display='none'; });
+  }
+
+  function normalizeUI() {
+    document.body.classList.add('bt-v8');
+    installContextToolbar();
+    moveSettingsIntoUser();
+    neutralizeOldFloatingDock();
+    removeLayoutArtifacts();
+    updateLiveClock();
   }
 
   function addBrandMicrocopy() {
@@ -276,12 +290,23 @@
     }
   }
 
+  function startUIObserver() {
+    if (uiObserverStarted || !document.body) return;
+    uiObserverStarted = true;
+    const observer = new MutationObserver(() => window.requestAnimationFrame(normalizeUI));
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   function start() {
+    loadIndustrialStyles();
     ensureToastStyle();
+    keepThemeInSync();
     bindLogin();
     addBrandMicrocopy();
     bootstrapAuth();
-    installFloatingActionFix();
+    startLiveClock();
+    normalizeUI();
+    startUIObserver();
   }
 
   function startLoginWatcher() {
